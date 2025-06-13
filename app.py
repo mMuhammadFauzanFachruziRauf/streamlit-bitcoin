@@ -8,8 +8,6 @@ import joblib
 import plotly.graph_objects as go
 from tensorflow.keras.models import load_model
 from datetime import datetime, timedelta
-import requests
-import time
 
 # =============================================================================
 # KONFIGURASI HALAMAN STREAMLIT
@@ -49,41 +47,38 @@ def load_all_assets():
         st.error(f"Terjadi kesalahan saat memuat aset model: {e}")
         return None
 
+# --- FUNGSI DATA DIPERBARUI UNTUK YFINANCE MODERN ---
 @st.cache_data(ttl=3600) # Cache data selama 1 jam
 def load_data(ticker="BTC-USD"):
     """
-    Mengambil data historis Bitcoin terbaru dengan cara yang lebih tangguh.
-    Fungsi ini menggunakan session dengan user-agent dan logika retry.
+    Mengambil data historis Bitcoin terbaru.
+    yfinance versi terbaru menangani sesi secara otomatis menggunakan curl_cffi.
     """
     st.info("Mengambil data terbaru dari server yfinance...")
+    try:
+        # yfinance modern tidak memerlukan session manual.
+        # Ia akan otomatis menggunakan backend yang lebih canggih.
+        data = yf.download(
+            tickers=ticker,
+            period="200d",
+            auto_adjust=True,
+            progress=False # Menonaktifkan progress bar di log
+        )
+        
+        if data.empty:
+            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}. Ini mungkin masalah sementara atau ticker tidak valid.")
+            return None
+        
+        st.success("Data berhasil diambil dari yfinance.")
+        data.rename(columns={
+            'Open': 'Open', 'High': 'High', 'Low': 'Low',
+            'Close': 'Close', 'Volume': 'Volume'
+        }, inplace=True, errors='ignore')
+        return data
 
-    # Membuat session untuk membuat permintaan terlihat seperti dari browser
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    })
-
-    # Logika retry: coba 3 kali jika gagal
-    for i in range(3):
-        try:
-            btc_ticker = yf.Ticker(ticker, session=session)
-            # Ambil data 200 hari terakhir untuk memastikan perhitungan MA cukup
-            data = btc_ticker.history(period="200d", auto_adjust=True)
-
-            if not data.empty:
-                st.success("Data berhasil diambil dari yfinance.")
-                data.rename(columns={
-                    'Open': 'Open', 'High': 'High', 'Low': 'Low',
-                    'Close': 'Close', 'Volume': 'Volume'
-                }, inplace=True)
-                return data
-            
-        except Exception as e:
-            st.warning(f"Percobaan {i+1} gagal: {e}. Mencoba lagi dalam 3 detik...")
-            time.sleep(3)
-
-    st.error("Gagal total mengambil data dari yfinance setelah beberapa kali percobaan. Server yfinance mungkin sedang sibuk atau membatasi akses. Silakan coba lagi nanti.")
-    return None
+    except Exception as e:
+        st.error(f"Gagal mengambil data dari yfinance. Kesalahan: {e}")
+        return None
 
 def create_features(df):
     """Membuat fitur teknikal yang konsisten dengan saat pelatihan."""
@@ -106,7 +101,6 @@ def create_features(df):
 st.title("₿ Prediksi & Analisis Harga Bitcoin (BTC-USD)")
 st.markdown("Aplikasi interaktif untuk memprediksi harga penutupan Bitcoin esok hari.")
 
-# Memuat aset di awal
 assets = load_all_assets()
 
 if assets:
@@ -122,7 +116,6 @@ if assets:
     selected_model_code = model_options[selected_model_display]
 
     if st.sidebar.button("🚀 Lakukan Prediksi Harga Besok"):
-        # Hanya panggil load_data saat tombol ditekan
         raw_data = load_data()
 
         if raw_data is not None and len(raw_data) > 90:
@@ -144,13 +137,12 @@ if assets:
                             prediction = scaler.inverse_transform(prediction_scaled)[0][0]
                         else:
                             st.warning(f"Data tidak cukup untuk lookback LSTM ({len(raw_data)}/{lookback} baris tersedia).")
-                            st.stop() # Menghentikan eksekusi jika data tidak cukup
+                            st.stop()
                     
                     else: # 'best_model'
                         model = assets['best_model']
                         scaler = assets['feature_scaler']
                         feature_columns = assets['feature_columns']
-                        # Pastikan semua kolom yang diperlukan ada
                         latest_input_df = feature_data[feature_columns].iloc[-1:]
                         input_scaled = scaler.transform(latest_input_df)
                         prediction = model.predict(input_scaled)[0]
@@ -158,7 +150,6 @@ if assets:
                     st.success("Prediksi berhasil dibuat!")
                     
                     history_df = raw_data.tail(90)
-                    # Menggunakan .to_pydatetime() untuk konversi yang aman
                     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
 
                     st.subheader("Informasi Data")
@@ -177,7 +168,7 @@ if assets:
                     st.subheader("Hasil Prediksi untuk Esok Hari")
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Harga Terakhir (Saat Ini)", f"${current_price:,.2f}")
-                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"{price_change:,.2f} ({pct_change:.2f}%)")
+                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"${price_change:,.2f} ({pct_change:.2f}%)")
                     col3.info(f"Model: **{selected_model_display}**")
                     
                     st.subheader("Visualisasi Harga")
@@ -192,7 +183,7 @@ if assets:
                         title='Pergerakan Harga Bitcoin: 90 Hari Terakhir & Prediksi Besok',
                         xaxis_title='Tanggal',
                         yaxis_title='Harga (USD)',
-                        template='plotly_dark' # Menggunakan tema gelap agar lebih menarik
+                        template='plotly_dark'
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
