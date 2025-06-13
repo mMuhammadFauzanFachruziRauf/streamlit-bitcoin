@@ -48,10 +48,6 @@ def _get_data_from_yfinance(ticker="BTC-USD"):
         session = Session(impersonate="chrome110")
         data = yf.download(tickers=ticker, start=start_date, end=end_date, auto_adjust=True, progress=False, session=session)
 
-        # =============================================================================
-        # INI ADALAH PERBAIKAN KUNCI
-        # Meratakan MultiIndex kolom menjadi nama kolom sederhana (e.g., 'Close')
-        # =============================================================================
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
@@ -107,19 +103,47 @@ def run_prediction(assets, raw_data, model_code):
         input_scaled = scaler.transform(latest_input_df[feature_columns])
         return float(model.predict(input_scaled)[0])
 
+# =============================================================================
+# DIUBAH: Fungsi display_prediction_results dengan warna dinamis
+# =============================================================================
 def display_prediction_results(prediction_result, raw_data, model_display_name):
-    """Menampilkan hasil prediksi."""
+    """Menampilkan hasil prediksi dengan warna dinamis."""
     history_df = raw_data.tail(90)
     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
     current_price = float(history_df['Close'].values[-1])
     
+    # Hitung perubahan harga
     price_change = prediction_result - current_price
     pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
 
     st.subheader("Hasil Prediksi untuk Esok Hari")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Harga Terakhir", f"${current_price:,.2f}", f"per {history_df.index[-1].strftime('%d %b %Y')}")
-    col2.metric("Prediksi Harga Besok", f"${prediction_result:,.2f}", f"${price_change:+.2f} ({pct_change:+.2f}%)")
+
+    # Kolom 1: Harga Terakhir (Tetap menggunakan st.metric)
+    col1.metric(
+        "Harga Terakhir", 
+        f"${current_price:,.2f}", 
+        f"per {history_df.index[-1].strftime('%d %b %Y')}"
+    )
+
+    # Kolom 2: Prediksi Harga Besok (Menggunakan st.markdown untuk warna custom)
+    # Tentukan warna berdasarkan nilai price_change
+    if price_change >= 0:
+        color = "#00c04b" # Warna hijau
+    else:
+        color = "#ff4b4b" # Warna merah
+
+    # Buat string untuk ditampilkan
+    delta_string = f"${price_change:+.2f} ({pct_change:+.2f}%)"
+
+    # Gunakan st.markdown dengan HTML untuk membuat metrik custom
+    col2.markdown(f"""
+    <div style="font-size: 0.875rem; color: rgba(250, 250, 250, 0.6);">Prediksi Harga Besok</div>
+    <div style="font-size: 1.75rem; font-weight: 600; color: rgb(250, 250, 250);">{f"${prediction_result:,.2f}"}</div>
+    <div style="color: {color}; font-weight: 600;">{delta_string}</div>
+    """, unsafe_allow_html=True)
+    
+    # Kolom 3: Model yang Digunakan (Tetap menggunakan st.metric)
     col3.metric("Model Digunakan", model_display_name)
     
     st.subheader("Visualisasi Harga")
@@ -127,6 +151,7 @@ def display_prediction_results(prediction_result, raw_data, model_display_name):
     fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], name='Harga Historis', mode='lines', line=dict(color='royalblue')))
     fig.add_trace(go.Scatter(x=[prediction_date], y=[prediction_result], name='Prediksi Harga', mode='markers', marker=dict(color='orange', size=12, symbol='star')))
     st.plotly_chart(fig, use_container_width=True)
+
 
 # =============================================================================
 # TAMPILAN STREAMLIT UTAMA
