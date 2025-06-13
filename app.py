@@ -1,4 +1,4 @@
-# app.pyMore actions
+# app.py
 
 import streamlit as st
 import pandas as pd
@@ -64,11 +64,11 @@ def load_data(ticker="BTC-USD"):
             auto_adjust=True,
             progress=False # Menonaktifkan progress bar di log
         )
-
+        
         if data.empty:
             st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}. Ini mungkin masalah sementara atau ticker tidak valid.")
             return None
-
+        
         st.success("Data berhasil diambil dari yfinance.")
         data.rename(columns={
             'Open': 'Open', 'High': 'High', 'Low': 'Low',
@@ -124,7 +124,7 @@ if assets:
 
                 if not feature_data.empty:
                     prediction = 0.0
-
+                    
                     if selected_model_code == "lstm_model":
                         model = assets['lstm_model']
                         scaler = assets['lstm_scaler']
@@ -138,7 +138,7 @@ if assets:
                         else:
                             st.warning(f"Data tidak cukup untuk lookback LSTM ({len(raw_data)}/{lookback} baris tersedia).")
                             st.stop()
-
+                    
                     else: # 'best_model'
                         model = assets['best_model']
                         scaler = assets['feature_scaler']
@@ -146,9 +146,9 @@ if assets:
                         latest_input_df = feature_data[feature_columns].iloc[-1:]
                         input_scaled = scaler.transform(latest_input_df)
                         prediction = model.predict(input_scaled)[0]
-
+                    
                     st.success("Prediksi berhasil dibuat!")
-
+                    
                     history_df = raw_data.tail(90)
                     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
 
@@ -158,19 +158,19 @@ if assets:
                         st.info(f"Tanggal historis terakhir: **{history_df.index[-1].strftime('%d %b %Y')}**")
                     with col_info2:
                         st.info(f"Tanggal yang sedang diprediksi: **{prediction_date.strftime('%d %b %Y')}**")
-
+                    
                     st.divider()
 
                     # --- PERBAIKAN: Memastikan harga terakhir adalah skalar ---
-                    # Mengambil baris terakhir sebagai Series, memeriksa jika kosong, lalu mengambil nilainya
-                    latest_close_series = raw_data['Close'].tail(1)
+                    # Mengambil data penutupan, dan memastikannya berupa Series
+                    close_data = raw_data['Close']
+                    if isinstance(close_data, pd.DataFrame):
+                        # Jika yfinance mengembalikan DataFrame (misalnya, karena multi-index),
+                        # ambil kolom pertama untuk menjadikannya Series.
+                        close_data = close_data.iloc[:, 0]
 
-
-
-
-
-
-
+                    # Sekarang 'close_data' dijamin berupa Series, lanjutkan seperti biasa.
+                    latest_close_series = close_data.tail(1)
                     if latest_close_series.empty:
                         st.error("Tidak dapat menemukan data harga terakhir yang valid. Data mentah mungkin kosong di bagian akhir.")
                         st.stop()
@@ -181,7 +181,7 @@ if assets:
                     if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
                         st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'. Coba lagi nanti.")
                         st.stop() # Menghentikan eksekusi skrip untuk menghindari error lebih lanjut
-
+                    
                     if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
                         st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
                         st.stop()
@@ -193,9 +193,9 @@ if assets:
                     st.subheader("Hasil Prediksi untuk Esok Hari")
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Harga Terakhir (Saat Ini)", f"${current_price:,.2f}")
-                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"${price_change:,.2f} ({pct_change:.2f}%)")
+                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"${price_change:.2f} ({pct_change:.2f}%)")
                     col3.info(f"Model: **{selected_model_display}**")
-
+                    
                     st.subheader("Visualisasi Harga")
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], mode='lines', name='Harga Historis'))
@@ -213,7 +213,7 @@ if assets:
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Tidak cukup data untuk membuat fitur setelah proses pembersihan. Periksa data mentah.")
-
+        
         elif raw_data is not None:
              st.warning(f"Tidak cukup data historis dari yfinance untuk membuat fitur (diperlukan > 90 hari, didapatkan {len(raw_data)} hari).")
 
@@ -221,3 +221,4 @@ if assets:
     st.sidebar.info("Aplikasi ini dibuat untuk tujuan edukasi dan bukan merupakan nasihat keuangan. Selalu lakukan riset Anda sendiri (DYOR).")
 else:
     st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat. Pastikan folder 'model' dan isinya sudah benar di repositori Anda dan periksa log aplikasi untuk detailnya.")
+
