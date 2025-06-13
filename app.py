@@ -161,9 +161,15 @@ if assets:
                     
                     st.divider()
 
-                    current_price = raw_data['Close'].iloc[-1]
+                    # --- PERBAIKAN: Memastikan harga terakhir adalah skalar ---
+                    # Mengambil baris terakhir sebagai Series, memeriksa jika kosong, lalu mengambil nilainya
+                    latest_close_series = raw_data['Close'].tail(1)
+                    if latest_close_series.empty:
+                        st.error("Tidak dapat menemukan data harga terakhir yang valid. Data mentah mungkin kosong di bagian akhir.")
+                        st.stop()
+                    current_price = latest_close_series.item()
 
-                    # --- BLOK KODE BARU UNTUK VALIDASI ---
+                    # --- BLOK KODE UNTUK VALIDASI ---
                     # Memastikan harga saat ini dan prediksi adalah angka yang valid sebelum digunakan.
                     if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
                         st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'. Coba lagi nanti.")
@@ -172,7 +178,7 @@ if assets:
                     if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
                         st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
                         st.stop()
-                    # --- AKHIR BLOK KODE BARU ---
+                    # --- AKHIR BLOK KODE VALIDASI ---
 
                     price_change = prediction - current_price
                     pct_change = (price_change / current_price) * 100
@@ -208,3 +214,4 @@ if assets:
     st.sidebar.info("Aplikasi ini dibuat untuk tujuan edukasi dan bukan merupakan nasihat keuangan. Selalu lakukan riset Anda sendiri (DYOR).")
 else:
     st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat. Pastikan folder 'model' dan isinya sudah benar di repositori Anda dan periksa log aplikasi untuk detailnya.")
+
