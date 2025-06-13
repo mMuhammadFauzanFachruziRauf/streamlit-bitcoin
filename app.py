@@ -149,7 +149,15 @@ if assets:
                     
                     st.success("Prediksi berhasil dibuat!")
                     
-                    history_df = raw_data.tail(90)
+                    # --- PERBAIKAN GRAFIK: Membersihkan data sebelum plotting ---
+                    # Hapus baris dengan data 'Close' yang kosong dari data histori untuk plot
+                    history_df = raw_data.tail(90).dropna(subset=['Close'])
+
+                    # Memastikan masih ada data untuk diplot setelah dibersihkan
+                    if history_df.empty:
+                        st.warning("Tidak ada data historis yang valid untuk ditampilkan di grafik.")
+                        st.stop()
+
                     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
 
                     st.subheader("Informasi Data")
@@ -161,26 +169,14 @@ if assets:
                     
                     st.divider()
 
-                    # --- PERBAIKAN: Memastikan harga terakhir adalah skalar ---
-                    # Mengambil data penutupan, dan memastikannya berupa Series
-                    close_data = raw_data['Close']
-                    if isinstance(close_data, pd.DataFrame):
-                        # Jika yfinance mengembalikan DataFrame (misalnya, karena multi-index),
-                        # ambil kolom pertama untuk menjadikannya Series.
-                        close_data = close_data.iloc[:, 0]
-
-                    # Sekarang 'close_data' dijamin berupa Series, lanjutkan seperti biasa.
-                    latest_close_series = close_data.tail(1)
-                    if latest_close_series.empty:
-                        st.error("Tidak dapat menemukan data harga terakhir yang valid. Data mentah mungkin kosong di bagian akhir.")
-                        st.stop()
-                    current_price = latest_close_series.item()
+                    # Mengambil harga terakhir dari data yang sudah pasti bersih
+                    current_price = history_df['Close'].iloc[-1]
 
                     # --- BLOK KODE UNTUK VALIDASI ---
                     # Memastikan harga saat ini dan prediksi adalah angka yang valid sebelum digunakan.
                     if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
                         st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'. Coba lagi nanti.")
-                        st.stop() # Menghentikan eksekusi skrip untuk menghindari error lebih lanjut
+                        st.stop() 
                     
                     if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
                         st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
