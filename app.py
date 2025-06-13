@@ -162,6 +162,18 @@ if assets:
                     st.divider()
 
                     current_price = raw_data['Close'].iloc[-1]
+
+                    # --- BLOK KODE BARU UNTUK VALIDASI ---
+                    # Memastikan harga saat ini dan prediksi adalah angka yang valid sebelum digunakan.
+                    if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
+                        st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'. Coba lagi nanti.")
+                        st.stop() # Menghentikan eksekusi skrip untuk menghindari error lebih lanjut
+                    
+                    if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
+                        st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
+                        st.stop()
+                    # --- AKHIR BLOK KODE BARU ---
+
                     price_change = prediction - current_price
                     pct_change = (price_change / current_price) * 100
 
@@ -196,4 +208,3 @@ if assets:
     st.sidebar.info("Aplikasi ini dibuat untuk tujuan edukasi dan bukan merupakan nasihat keuangan. Selalu lakukan riset Anda sendiri (DYOR).")
 else:
     st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat. Pastikan folder 'model' dan isinya sudah benar di repositori Anda dan periksa log aplikasi untuk detailnya.")
-
