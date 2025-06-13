@@ -1,0 +1,14 @@
+# File Cache dan Temporary
+__pycache__/
+*.pyc
+yfinance.cache
+*.ipynb_checkpoints
+
+# Skrip Pengembangan & Notebook (tidak perlu untuk deployment)
+training_script.py
+test_data.py
+*.ipynb
+
+# Lingkungan Virtual (jika ada)
+venv/
+.venv/
