@@ -162,8 +162,15 @@ if assets:
                     st.divider()
 
                     # --- PERBAIKAN: Memastikan harga terakhir adalah skalar ---
-                    # Mengambil baris terakhir sebagai Series, memeriksa jika kosong, lalu mengambil nilainya
-                    latest_close_series = raw_data['Close'].tail(1)
+                    # Mengambil data penutupan, dan memastikannya berupa Series
+                    close_data = raw_data['Close']
+                    if isinstance(close_data, pd.DataFrame):
+                        # Jika yfinance mengembalikan DataFrame (misalnya, karena multi-index),
+                        # ambil kolom pertama untuk menjadikannya Series.
+                        close_data = close_data.iloc[:, 0]
+
+                    # Sekarang 'close_data' dijamin berupa Series, lanjutkan seperti biasa.
+                    latest_close_series = close_data.tail(1)
                     if latest_close_series.empty:
                         st.error("Tidak dapat menemukan data harga terakhir yang valid. Data mentah mungkin kosong di bagian akhir.")
                         st.stop()
