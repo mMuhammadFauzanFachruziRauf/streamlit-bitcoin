@@ -14,13 +14,7 @@ from curl_cffi.requests import Session
 st.set_page_config(page_title="Prediksi Harga Bitcoin", page_icon="₿", layout="wide")
 
 # =============================================================================
-# DEFINISI KONSTANTA
-# =============================================================================
-MODEL_DIR = 'model/'
-LSTM_LOOKBACK = 60
-
-# =============================================================================
-# FUNGSI-FUNGSI UTAMA
+# FUNGSI HELPERS (Tidak perlu diubah)
 # =============================================================================
 
 @st.cache_resource
@@ -28,11 +22,11 @@ def load_all_assets():
     """Memuat semua aset model dan scaler dari disk."""
     try:
         assets = {
-            'best_model': joblib.load(f'{MODEL_DIR}best_bitcoin_model.pkl'),
-            'feature_scaler': joblib.load(f'{MODEL_DIR}feature_scaler.pkl'),
-            'feature_columns': joblib.load(f'{MODEL_DIR}feature_columns.pkl'),
-            'lstm_model': load_model(f'{MODEL_DIR}lstm_bitcoin_model.keras'),
-            'lstm_scaler': joblib.load(f'{MODEL_DIR}lstm_scaler.pkl')
+            'best_model': joblib.load('model/best_bitcoin_model.pkl'),
+            'feature_scaler': joblib.load('model/feature_scaler.pkl'),
+            'feature_columns': joblib.load('model/feature_columns.pkl'),
+            'lstm_model': load_model('model/lstm_bitcoin_model.keras'),
+            'lstm_scaler': joblib.load('model/lstm_scaler.pkl')
         }
         return assets
     except Exception as e:
@@ -47,32 +41,25 @@ def _get_data_from_yfinance(ticker="BTC-USD"):
         start_date = end_date - timedelta(days=365)
         session = Session(impersonate="chrome110")
         data = yf.download(tickers=ticker, start=start_date, end=end_date, auto_adjust=True, progress=False, session=session)
-
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
-
         return data
     except Exception as e:
         return e
 
 def load_data_with_ui(ticker="BTC-USD"):
     """Fungsi yang dipanggil aplikasi: Menangani UI dan memanggil fungsi cache."""
-    st.info("Memeriksa data harga Bitcoin terbaru...")
     data = _get_data_from_yfinance(ticker)
-    
-    if isinstance(data, pd.DataFrame):
-        if data.empty:
-            st.error(f"Gagal mengambil data untuk {ticker} (tidak ada data yang dikembalikan).")
-            return None
-        st.success("Data berhasil dimuat.")
+    if isinstance(data, pd.DataFrame) and not data.empty:
         return data
     elif isinstance(data, Exception):
         st.error(f"Terjadi error saat mengambil data: {data}")
         return None
-    return None
-
+    else:
+        st.error(f"Gagal mengambil data untuk {ticker} (tidak ada data yang dikembalikan).")
+        return None
+        
 def create_features(df):
-    """Membuat semua fitur teknikal yang dibutuhkan oleh model."""
     df_feat = df.copy()
     df_feat['MA_7'] = df_feat['Close'].rolling(window=7).mean()
     df_feat['MA_30'] = df_feat['Close'].rolling(window=30).mean()
@@ -86,7 +73,7 @@ def create_features(df):
     return df_feat
 
 def run_prediction(assets, raw_data, model_code):
-    """Menjalankan proses prediksi dan mengembalikan float."""
+    LSTM_LOOKBACK = 60
     if model_code == "lstm_model":
         model, scaler = assets['lstm_model'], assets['lstm_scaler']
         if len(raw_data) < LSTM_LOOKBACK: return None
@@ -104,107 +91,93 @@ def run_prediction(assets, raw_data, model_code):
         return float(model.predict(input_scaled)[0])
 
 # =============================================================================
-# DIUBAH: Fungsi display_prediction_results dengan warna dinamis
+# FUNGSI TAMPILAN TERPADU
 # =============================================================================
-def display_prediction_results(prediction_result, raw_data, model_display_name):
-    """Menampilkan hasil prediksi dengan warna dinamis."""
-    history_df = raw_data.tail(90)
-    prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
-    current_price = float(history_df['Close'].values[-1])
+def display_content():
+    """Satu fungsi untuk menampilkan semua konten berdasarkan session_state."""
     
-    # Hitung perubahan harga
-    price_change = prediction_result - current_price
-    pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
-
-    st.subheader("Hasil Prediksi untuk Esok Hari")
-    col1, col2, col3 = st.columns(3)
-
-    # Kolom 1: Harga Terakhir (Tetap menggunakan st.metric)
-    col1.metric(
-        "Harga Terakhir", 
-        f"${current_price:,.2f}", 
-        f"per {history_df.index[-1].strftime('%d %b %Y')}"
-    )
-
-    # Kolom 2: Prediksi Harga Besok (Menggunakan st.markdown untuk warna custom)
-    # Tentukan warna berdasarkan nilai price_change
-    if price_change >= 0:
-        color = "#00c04b" # Warna hijau
-    else:
-        color = "#ff4b4b" # Warna merah
-
-    # Buat string untuk ditampilkan
-    delta_string = f"${price_change:+.2f} ({pct_change:+.2f}%)"
-
-    # Gunakan st.markdown dengan HTML untuk membuat metrik custom
-    col2.markdown(f"""
-    <div style="font-size: 0.875rem; color: rgba(250, 250, 250, 0.6);">Prediksi Harga Besok</div>
-    <div style="font-size: 1.75rem; font-weight: 600; color: rgb(250, 250, 250);">{f"${prediction_result:,.2f}"}</div>
-    <div style="color: {color}; font-weight: 600;">{delta_string}</div>
-    """, unsafe_allow_html=True)
+    # Ambil data dari session_state
+    raw_data = st.session_state.get('raw_data')
+    prediction_result = st.session_state.get('prediction_result')
+    model_display_name = st.session_state.get('model_name')
     
-    # Kolom 3: Model yang Digunakan (Tetap menggunakan st.metric)
-    col3.metric("Model Digunakan", model_display_name)
+    # Tampilkan Metrik hanya jika ada hasil prediksi
+    if prediction_result is not None and model_display_name is not None:
+        st.subheader("Hasil Prediksi untuk Esok Hari")
+        history_df_metric = raw_data.tail(90)
+        current_price = float(history_df_metric['Close'].values[-1])
+        price_change = prediction_result - current_price
+        pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Harga Terakhir", f"${current_price:,.2f}", f"per {history_df_metric.index[-1].strftime('%d %b %Y')}")
+        
+        color = "#00c04b" if price_change >= 0 else "#ff4b4b"
+        delta_string = f"${price_change:+.2f} ({pct_change:+.2f}%)"
+        col2.markdown(f"""
+        <div style="font-size: 0.875rem; color: rgba(250, 250, 250, 0.6);">Prediksi Harga Besok</div>
+        <div style="font-size: 1.75rem; font-weight: 600;">{f"${prediction_result:,.2f}"}</div>
+        <div style="color: {color}; font-weight: 600;">{delta_string}</div>
+        """, unsafe_allow_html=True)
+        col3.metric("Model Digunakan", model_display_name)
     
+    # Tampilkan Grafik (selalu, selama data ada)
     st.subheader("Visualisasi Harga")
+    history_df_chart = raw_data.tail(90)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], name='Harga Historis', mode='lines', line=dict(color='royalblue')))
-    fig.add_trace(go.Scatter(x=[prediction_date], y=[prediction_result], name='Prediksi Harga', mode='markers', marker=dict(color='orange', size=12, symbol='star')))
+    fig.add_trace(go.Scatter(x=history_df_chart.index, y=history_df_chart['Close'], name='Harga Historis', mode='lines', line=dict(color='royalblue')))
+    
+    if prediction_result is not None:
+        prediction_date = history_df_chart.index[-1].to_pydatetime() + timedelta(days=1)
+        fig.add_trace(go.Scatter(x=[prediction_date], y=[prediction_result], name='Prediksi Harga', mode='markers', marker=dict(color='orange', size=12, symbol='star')))
+        
+    fig.update_layout(title='Pergerakan Harga Bitcoin & Prediksi', xaxis_title='Tanggal', yaxis_title='Harga (USD)')
     st.plotly_chart(fig, use_container_width=True)
 
-
 # =============================================================================
-# TAMPILAN STREAMLIT UTAMA
+# ALUR UTAMA APLIKASI
 # =============================================================================
 def main():
     st.title("₿ Prediksi & Analisis Harga Bitcoin")
     
+    # Muat aset-aset penting
     assets = load_all_assets()
     if not assets:
         st.stop()
 
+    # Muat data historis ke dalam state jika belum ada
+    if 'raw_data' not in st.session_state:
+        st.session_state['raw_data'] = load_data_with_ui()
+
+    # --- Sidebar ---
     st.sidebar.header("Opsi Prediksi")
     model_options = {"Model Regresi": "best_model", "Model LSTM": "lstm_model"}
     selected_model_display = st.sidebar.selectbox("Pilih Model:", options=list(model_options.keys()))
     selected_model_code = model_options[selected_model_display]
 
     if st.sidebar.button("🚀 Lakukan Prediksi", type="primary"):
-        with st.spinner("Memproses prediksi..."):
-            raw_data_pred = load_data_with_ui()
-            if raw_data_pred is not None:
-                prediction = run_prediction(assets, raw_data_pred, selected_model_code)
+        if st.session_state['raw_data'] is not None:
+            with st.spinner("Memproses prediksi..."):
+                prediction = run_prediction(assets, st.session_state['raw_data'], selected_model_code)
                 if prediction is not None:
                     st.session_state['prediction_result'] = prediction
-                    st.session_state['raw_data'] = raw_data_pred
                     st.session_state['model_name'] = selected_model_display
                 else:
                     st.error("Gagal membuat prediksi. Data tidak mencukupi untuk membuat fitur.")
-                    st.session_state.clear()
-            else:
-                st.error("Gagal prediksi karena data tidak dapat diambil.")
-                st.session_state.clear()
+                    # Jangan hapus raw_data, hapus saja hasil prediksi sebelumnya
+                    st.session_state.pop('prediction_result', None)
+                    st.session_state.pop('model_name', None)
+        else:
+            st.error("Gagal prediksi karena data historis tidak dapat dimuat.")
 
     st.sidebar.info("Aplikasi ini bukan merupakan nasihat keuangan.")
     st.divider()
 
-    if 'prediction_result' in st.session_state and st.session_state.get('prediction_result') is not None:
-        display_prediction_results(
-            st.session_state['prediction_result'],
-            st.session_state['raw_data'],
-            st.session_state['model_name']
-        )
+    # --- Tampilan Konten Utama ---
+    if st.session_state.get('raw_data') is not None:
+        display_content()
     else:
-        st.info("Pilih model di sidebar & klik 'Lakukan Prediksi' untuk memulai.")
-        raw_data_hist = load_data_with_ui()
-        
-        if isinstance(raw_data_hist, pd.DataFrame) and not raw_data_hist.empty:
-            st.subheader("Pergerakan Harga Bitcoin (90 Hari Terakhir)")
-            fig_hist = go.Figure()
-            fig_hist.add_trace(go.Scatter(x=raw_data_hist.index.tail(90), y=raw_data_hist['Close'].tail(90), mode='lines', name='Harga Historis'))
-            fig_hist.update_layout(title='Grafik Harga Historis BTC-USD', xaxis_title='Tanggal', yaxis_title='Harga (USD)')
-            st.plotly_chart(fig_hist, use_container_width=True)
-        else:
-            st.warning("Tidak dapat menampilkan grafik karena data awal gagal dimuat.")
+        st.warning("Gagal memuat data awal. Silakan coba muat ulang halaman.")
 
 if __name__ == '__main__':
     main()
