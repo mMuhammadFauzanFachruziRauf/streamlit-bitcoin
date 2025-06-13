@@ -47,12 +47,12 @@ def load_all_assets():
         st.error(f"Terjadi kesalahan saat memuat aset model: {e}")
         return None
 
-# --- FUNGSI DATA DIPERBARUI DENGAN STANDARDISASI KOLOM ---
+# --- FUNGSI DATA DIPERBARUI DENGAN PENANGANAN MULTI-INDEX ---
 @st.cache_data(ttl=3600) # Cache data selama 1 jam
 def load_data(ticker="BTC-USD"):
     """
     Mengambil data historis Bitcoin terbaru.
-    Fungsi ini juga menstandardisasi nama kolom untuk konsistensi.
+    Fungsi ini menangani kolom MultiIndex dan menstandardisasi nama kolom.
     """
     st.info("Mengambil data terbaru dari server yfinance...")
     try:
@@ -67,10 +67,13 @@ def load_data(ticker="BTC-USD"):
             st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}.")
             return None
         
-        # --- PERBAIKAN: Standardisasi nama kolom ---
-        # Mengubah semua nama kolom menjadi Title Case (misal: 'close' -> 'Close')
-        # untuk memastikan konsistensi di seluruh aplikasi.
-        data.columns = [col.title() for col in data.columns]
+        # --- PERBAIKAN: Menangani MultiIndex dan standardisasi nama kolom ---
+        # Jika kolom adalah MultiIndex (bertingkat), ratakan dengan mengambil level pertama.
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+
+        # Sekarang, setelah dipastikan kolomnya sederhana, ubah menjadi Title Case.
+        data.columns = [str(col).title() for col in data.columns]
         
         # Memeriksa apakah kolom 'Close' ada setelah standardisasi
         if 'Close' not in data.columns:
