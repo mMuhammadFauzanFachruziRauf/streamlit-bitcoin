@@ -94,7 +94,8 @@ def run_prediction(assets, raw_data, model_code):
         latest_scaled = scaler.transform(latest_prices)
         input_lstm = np.reshape(latest_scaled, (1, LSTM_LOOKBACK, 1))
         prediction_scaled = model.predict(input_lstm)
-        return scaler.inverse_transform(prediction_scaled)[0][0]
+        # DIUBAH: Pastikan output adalah float standar Python
+        return float(scaler.inverse_transform(prediction_scaled)[0][0])
     else: # "best_model"
         model = assets['best_model']
         scaler = assets['feature_scaler']
@@ -104,18 +105,18 @@ def run_prediction(assets, raw_data, model_code):
             st.warning("Tidak cukup data untuk membuat fitur (diperlukan > 90 hari).")
             return None
         latest_input_df = feature_data.iloc[-1:]
-        # DIUBAH: Memastikan urutan kolom benar untuk scaler
         input_scaled = scaler.transform(latest_input_df[feature_columns])
-        return model.predict(input_scaled)[0]
+        # DIUBAH: Pastikan output adalah float standar Python
+        return float(model.predict(input_scaled)[0])
 
 def display_prediction_results(prediction_result, raw_data, model_display_name):
     """Menampilkan metrik dan grafik hasil prediksi."""
     history_df = raw_data.tail(90)
     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
     
-    # DIUBAH: Menggunakan .values[-1] untuk memastikan mendapat angka tunggal
-    current_price = history_df['Close'].values[-1]
-    prediction = prediction_result
+    # DIUBAH: Pastikan current_price adalah float standar Python
+    current_price = float(history_df['Close'].values[-1])
+    prediction = prediction_result # Ini sudah float dari run_prediction()
     
     price_change = prediction - current_price
     pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
