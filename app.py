@@ -8,6 +8,8 @@ import joblib
 import plotly.graph_objects as go
 from tensorflow.keras.models import load_model
 from datetime import datetime, timedelta
+import requests
+import time
 
 # =============================================================================
 # KONFIGURASI HALAMAN STREAMLIT
@@ -28,6 +30,7 @@ def load_all_assets():
     assets = {}
     model_dir = 'model/'
     try:
+        # Pastikan path ini benar di repositori Anda
         assets['best_model'] = joblib.load(f'{model_dir}best_bitcoin_model.pkl')
         assets['feature_scaler'] = joblib.load(f'{model_dir}feature_scaler.pkl')
         assets['feature_columns'] = joblib.load(f'{model_dir}feature_columns.pkl')
@@ -38,25 +41,54 @@ def load_all_assets():
     except FileNotFoundError as e:
         st.error(
             f"File tidak ditemukan: {e.filename}. "
-            f"Pastikan Anda sudah menjalankan 'training_script.py' terlebih dahulu."
+            f"Pastikan folder 'model' dan semua isinya ada di repositori GitHub Anda "
+            f"dan path-nya sudah benar."
         )
         return None
-
-@st.cache_data(ttl=3600)
-def load_data(ticker="BTC-USD"):
-    """Mengambil data historis Bitcoin terbaru menggunakan parameter 'period'."""
-    st.info("Mengambil data terbaru dari server yfinance...")
-    data = yf.download(
-        tickers=ticker,
-        period="200d",  # Data 200 hari terakhir agar MA dan lag bisa dihitung
-        progress=False
-    )
-    if data.empty:
-        st.warning("Gagal mengambil data dari yfinance. Coba lagi nanti.")
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat memuat aset model: {e}")
         return None
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.droplevel(1)
-    return data
+
+
+# --- PERUBAHAN UTAMA DI FUNGSI INI ---
+@st.cache_data(ttl=3600) # Cache data selama 1 jam
+def load_data(ticker="BTC-USD"):
+    """
+    Mengambil data historis Bitcoin terbaru dengan cara yang lebih tangguh.
+    Fungsi ini menggunakan session dengan user-agent dan logika retry.
+    """
+    st.info("Mengambil data terbaru dari server yfinance...")
+
+    # Membuat session untuk membuat permintaan terlihat seperti dari browser
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+
+    # Logika retry: coba 3 kali jika gagal
+    for i in range(3):
+        try:
+            # Gunakan yf.Ticker untuk memanfaatkan session yang sudah dibuat
+            btc_ticker = yf.Ticker(ticker, session=session)
+            # Ambil data 200 hari terakhir untuk memastikan perhitungan MA cukup
+            data = btc_ticker.history(period="200d", auto_adjust=True)
+
+            if not data.empty:
+                st.success("Data berhasil diambil dari yfinance.")
+                # Mengganti nama kolom agar konsisten (yf terkadang mengubahnya)
+                data.rename(columns={
+                    'Open': 'Open', 'High': 'High', 'Low': 'Low',
+                    'Close': 'Close', 'Volume': 'Volume'
+                }, inplace=True)
+                return data
+            
+        except Exception as e:
+            st.warning(f"Percobaan {i+1} gagal: {e}. Mencoba lagi dalam 3 detik...")
+            time.sleep(3)
+
+    st.error("Gagal total mengambil data dari yfinance setelah beberapa kali percobaan. Server yfinance mungkin sedang sibuk atau membatasi akses. Silakan coba lagi nanti.")
+    return None
+
 
 def create_features(df):
     """Membuat fitur teknikal yang konsisten dengan saat pelatihan."""
@@ -98,7 +130,7 @@ if assets:
 
         if raw_data is not None and len(raw_data) > 90:
             with st.spinner("Membuat fitur dan melakukan prediksi..."):
-                feature_data = create_features(raw_data)
+                feature_data = create_features(raw_data.copy())
 
                 if not feature_data.empty:
                     prediction = 0.0
@@ -107,11 +139,16 @@ if assets:
                         model = assets['lstm_model']
                         scaler = assets['lstm_scaler']
                         lookback = 60
-                        latest_prices = raw_data['Close'].iloc[-lookback:].values.reshape(-1, 1)
-                        latest_scaled = scaler.transform(latest_prices)
-                        input_lstm = latest_scaled.reshape(1, lookback, 1)
-                        prediction_scaled = model.predict(input_lstm)
-                        prediction = scaler.inverse_transform(prediction_scaled)[0][0]
+                        # Pastikan data yang diambil cukup untuk lookback
+                        if len(raw_data) >= lookback:
+                            latest_prices = raw_data['Close'].iloc[-lookback:].values.reshape(-1, 1)
+                            latest_scaled = scaler.transform(latest_prices)
+                            input_lstm = latest_scaled.reshape(1, lookback, 1)
+                            prediction_scaled = model.predict(input_lstm)
+                            prediction = scaler.inverse_transform(prediction_scaled)[0][0]
+                        else:
+                            st.warning(f"Data tidak cukup untuk lookback LSTM ({len(raw_data)}/{lookback} baris tersedia).")
+                            st.stop()
                     else:
                         model = assets['best_model']
                         scaler = assets['feature_scaler']
@@ -122,47 +159,4 @@ if assets:
                     
                     st.success("Prediksi berhasil dibuat!")
                     
-                    history_df = raw_data.tail(90)
-                    prediction_date = history_df.index[-1] + timedelta(days=1)
-
-                    st.subheader("Informasi Data")
-                    col_info1, col_info2 = st.columns(2)
-                    with col_info1:
-                        st.info(f"Tanggal historis terakhir: **{history_df.index[-1].strftime('%d %b %Y')}**")
-                    with col_info2:
-                        st.info(f"Tanggal yang sedang diprediksi: **{prediction_date.strftime('%d %b %Y')}**")
-                    
-                    st.divider()
-
-                    current_price = raw_data['Close'].iloc[-1]
-                    price_change = prediction - current_price
-                    pct_change = (price_change / current_price) * 100
-
-                    st.subheader("Hasil Prediksi untuk Esok Hari")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Harga Terakhir (Saat Ini)", f"${current_price:,.2f}")
-                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"${price_change:,.2f} ({pct_change:.2f}%)")
-                    col3.info(f"Model: **{selected_model_display}**")
-                    
-                    st.subheader("Visualisasi Harga")
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], mode='lines', name='Harga Historis'))
-                    fig.add_trace(go.Scatter(
-                        x=[prediction_date], y=[prediction], mode='markers', name='Harga Prediksi',
-                        marker=dict(color='orange', size=12, symbol='star'),
-                        hovertemplate=f"<b>Prediksi untuk {prediction_date.strftime('%d %b %Y')}</b><br>Harga: ${prediction:,.2f}<extra></extra>"
-                    ))
-                    fig.update_layout(
-                        title='Pergerakan Harga Bitcoin: 90 Hari Terakhir & Prediksi Besok',
-                        xaxis_title='Tanggal',
-                        yaxis_title='Harga (USD)'
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Tidak cukup data untuk membuat fitur.")
-        else:
-            st.warning("Tidak cukup data historis dari yfinance.")
-    st.sidebar.markdown("---")
-    st.sidebar.info("Disclaimer: Ini bukan nasihat keuangan.")
-else:
-    st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat.")
+                    hist
