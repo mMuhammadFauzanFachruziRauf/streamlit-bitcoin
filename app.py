@@ -83,7 +83,7 @@ def create_features(df):
     return df_feat
 
 def run_prediction(assets, raw_data, model_code):
-    """Menjalankan proses prediksi berdasarkan model yang dipilih."""
+    """Menjalankan proses prediksi dan mengembalikan float."""
     if model_code == "lstm_model":
         model = assets['lstm_model']
         scaler = assets['lstm_scaler']
@@ -94,7 +94,6 @@ def run_prediction(assets, raw_data, model_code):
         latest_scaled = scaler.transform(latest_prices)
         input_lstm = np.reshape(latest_scaled, (1, LSTM_LOOKBACK, 1))
         prediction_scaled = model.predict(input_lstm)
-        # DIUBAH: Pastikan output adalah float standar Python
         return float(scaler.inverse_transform(prediction_scaled)[0][0])
     else: # "best_model"
         model = assets['best_model']
@@ -106,7 +105,6 @@ def run_prediction(assets, raw_data, model_code):
             return None
         latest_input_df = feature_data.iloc[-1:]
         input_scaled = scaler.transform(latest_input_df[feature_columns])
-        # DIUBAH: Pastikan output adalah float standar Python
         return float(model.predict(input_scaled)[0])
 
 def display_prediction_results(prediction_result, raw_data, model_display_name):
@@ -114,9 +112,8 @@ def display_prediction_results(prediction_result, raw_data, model_display_name):
     history_df = raw_data.tail(90)
     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
     
-    # DIUBAH: Pastikan current_price adalah float standar Python
     current_price = float(history_df['Close'].values[-1])
-    prediction = prediction_result # Ini sudah float dari run_prediction()
+    prediction = prediction_result
     
     price_change = prediction - current_price
     pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
@@ -184,7 +181,7 @@ def main():
     if st.sidebar.button("🚀 Lakukan Prediksi", type="primary"):
         with st.spinner("Mengambil data & melakukan prediksi..."):
             raw_data_pred = load_data()
-            if raw_data_pred is not None:
+            if isinstance(raw_data_pred, pd.DataFrame) and not raw_data_pred.empty:
                 prediction = run_prediction(assets, raw_data_pred, selected_model_code)
                 st.session_state['prediction_result'] = prediction
                 st.session_state['raw_data'] = raw_data_pred
@@ -209,7 +206,8 @@ def main():
         st.info("Pilih model di sidebar & klik tombol 'Lakukan Prediksi' untuk memulai.")
         with st.spinner("Memuat data historis..."):
             raw_data_hist = load_data()
-            if raw_data_hist is not None:
+            # DIUBAH: Pengecekan yang lebih kuat dan anti-error
+            if isinstance(raw_data_hist, pd.DataFrame) and not raw_data_hist.empty:
                 st.subheader("Pergerakan Harga Bitcoin (90 Hari Terakhir)")
                 fig_hist = go.Figure()
                 fig_hist.add_trace(go.Scatter(
@@ -223,7 +221,7 @@ def main():
                 )
                 st.plotly_chart(fig_hist, use_container_width=True)
             else:
-                st.warning("Tidak dapat menampilkan grafik karena gagal memuat data.")
+                st.warning("Tidak dapat menampilkan grafik karena gagal memuat data awal.")
 
 if __name__ == '__main__':
     main()
