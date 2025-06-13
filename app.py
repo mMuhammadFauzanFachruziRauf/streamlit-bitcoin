@@ -5,7 +5,7 @@ import yfinance as yf
 import joblib
 import plotly.graph_objects as go
 from tensorflow.keras.models import load_model
-from datetime import datetime, timedelta
+from datetime import date, timedelta # DIUBAH: Tambahkan 'date' dan 'timedelta'
 from curl_cffi.requests import Session
 
 # =============================================================================
@@ -39,13 +39,23 @@ def load_all_assets():
         st.error(f"Error fatal saat memuat aset model: {e}. Aplikasi tidak bisa berjalan.")
         return None
 
-# Pola Pengambilan Data yang Kuat
+# DIUBAH: Menggunakan start/end date untuk pengambilan data yang lebih andal
 @st.cache_data(ttl=3600)
 def _get_data_from_yfinance(ticker="BTC-USD"):
     """Fungsi MURNI yang di-cache: Hanya download data, tanpa interaksi UI."""
     try:
+        end_date = date.today()
+        start_date = end_date - timedelta(days=365) # Ambil data 1 tahun untuk keamanan
+        
         session = Session(impersonate="chrome110")
-        data = yf.download(tickers=ticker, period="250d", auto_adjust=True, progress=False, session=session)
+        data = yf.download(
+            tickers=ticker, 
+            start=start_date, 
+            end=end_date, 
+            auto_adjust=True, 
+            progress=False, 
+            session=session
+        )
         return data
     except Exception as e:
         return e
@@ -66,9 +76,6 @@ def load_data_with_ui(ticker="BTC-USD"):
         return None
     return None
 
-# =============================================================================
-# DIKEMBALIKAN KE VERSI LENGKAP: Fungsi create_features
-# =============================================================================
 def create_features(df):
     """Membuat semua fitur teknikal yang dibutuhkan oleh model."""
     df_feat = df.copy()
@@ -98,7 +105,6 @@ def run_prediction(assets, raw_data, model_code):
         feature_data = create_features(raw_data.copy())
         if feature_data.empty: return None
         latest_input_df = feature_data.iloc[-1:]
-        # Baris ini sekarang seharusnya aman karena create_features sudah lengkap
         input_scaled = scaler.transform(latest_input_df[feature_columns])
         return float(model.predict(input_scaled)[0])
 
@@ -117,10 +123,9 @@ def display_prediction_results(prediction_result, raw_data, model_display_name):
     col2.metric("Prediksi Harga Besok", f"${prediction_result:,.2f}", f"${price_change:+.2f} ({pct_change:+.2f}%)")
     col3.metric("Model Digunakan", model_display_name)
     
-    # ... (sisa fungsi display_prediction_results sama)
     st.subheader("Visualisasi Harga")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], name='Harga Historis', line=dict(color='royalblue')))
+    fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], name='Harga Historis', mode='lines', line=dict(color='royalblue')))
     fig.add_trace(go.Scatter(x=[prediction_date], y=[prediction_result], name='Prediksi Harga', mode='markers', marker=dict(color='orange', size=12, symbol='star')))
     st.plotly_chart(fig, use_container_width=True)
 
@@ -171,8 +176,8 @@ def main():
         if isinstance(raw_data_hist, pd.DataFrame) and not raw_data_hist.empty:
             st.subheader("Pergerakan Harga Bitcoin (90 Hari Terakhir)")
             fig_hist = go.Figure()
-            fig_hist.add_trace(go.Scatter(x=raw_data_hist.index.tail(90), y=raw_data_hist['Close'].tail(90)))
-            fig_hist.update_layout(title='Grafik Harga Historis BTC-USD')
+            fig_hist.add_trace(go.Scatter(x=raw_data_hist.index.tail(90), y=raw_data_hist['Close'].tail(90), mode='lines', name='Harga Historis'))
+            fig_hist.update_layout(title='Grafik Harga Historis BTC-USD', xaxis_title='Tanggal', yaxis_title='Harga (USD)')
             st.plotly_chart(fig_hist, use_container_width=True)
         else:
             st.warning("Tidak dapat menampilkan grafik karena data awal gagal dimuat.")
