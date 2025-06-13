@@ -47,33 +47,37 @@ def load_all_assets():
         st.error(f"Terjadi kesalahan saat memuat aset model: {e}")
         return None
 
-# --- FUNGSI DATA DIPERBARUI UNTUK YFINANCE MODERN ---
+# --- FUNGSI DATA DIPERBARUI DENGAN STANDARDISASI KOLOM ---
 @st.cache_data(ttl=3600) # Cache data selama 1 jam
 def load_data(ticker="BTC-USD"):
     """
     Mengambil data historis Bitcoin terbaru.
-    yfinance versi terbaru menangani sesi secara otomatis menggunakan curl_cffi.
+    Fungsi ini juga menstandardisasi nama kolom untuk konsistensi.
     """
     st.info("Mengambil data terbaru dari server yfinance...")
     try:
-        # yfinance modern tidak memerlukan session manual.
-        # Ia akan otomatis menggunakan backend yang lebih canggih.
         data = yf.download(
             tickers=ticker,
             period="200d",
             auto_adjust=True,
-            progress=False # Menonaktifkan progress bar di log
+            progress=False
         )
         
         if data.empty:
-            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}. Ini mungkin masalah sementara atau ticker tidak valid.")
+            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}.")
             return None
         
+        # --- PERBAIKAN: Standardisasi nama kolom ---
+        # Mengubah semua nama kolom menjadi Title Case (misal: 'close' -> 'Close')
+        # untuk memastikan konsistensi di seluruh aplikasi.
+        data.columns = [col.title() for col in data.columns]
+        
+        # Memeriksa apakah kolom 'Close' ada setelah standardisasi
+        if 'Close' not in data.columns:
+            st.error(f"Gagal menemukan kolom 'Close' bahkan setelah standardisasi. Kolom yang ditemukan: {data.columns.tolist()}")
+            return None
+
         st.success("Data berhasil diambil dari yfinance.")
-        data.rename(columns={
-            'Open': 'Open', 'High': 'High', 'Low': 'Low',
-            'Close': 'Close', 'Volume': 'Volume'
-        }, inplace=True, errors='ignore')
         return data
 
     except Exception as e:
@@ -83,6 +87,7 @@ def load_data(ticker="BTC-USD"):
 def create_features(df):
     """Membuat fitur teknikal yang konsisten dengan saat pelatihan."""
     df_feat = df.copy()
+    # Kode ini sekarang aman karena nama kolom sudah distandardisasi
     df_feat['MA_7'] = df_feat['Close'].rolling(window=7).mean()
     df_feat['MA_30'] = df_feat['Close'].rolling(window=30).mean()
     df_feat['MA_90'] = df_feat['Close'].rolling(window=90).mean()
@@ -130,6 +135,7 @@ if assets:
                         scaler = assets['lstm_scaler']
                         lookback = 60
                         if len(raw_data) >= lookback:
+                            # Semua penggunaan 'Close' di sini aman
                             latest_prices = raw_data['Close'].iloc[-lookback:].values.reshape(-1, 1)
                             latest_scaled = scaler.transform(latest_prices)
                             input_lstm = np.reshape(latest_scaled, (1, lookback, 1))
@@ -149,11 +155,8 @@ if assets:
                     
                     st.success("Prediksi berhasil dibuat!")
                     
-                    # --- PERBAIKAN GRAFIK: Membersihkan data sebelum plotting ---
-                    # Hapus baris dengan data 'Close' yang kosong dari data histori untuk plot
                     history_df = raw_data.tail(90).dropna(subset=['Close'])
 
-                    # Memastikan masih ada data untuk diplot setelah dibersihkan
                     if history_df.empty:
                         st.warning("Tidak ada data historis yang valid untuk ditampilkan di grafik.")
                         st.stop()
@@ -169,19 +172,11 @@ if assets:
                     
                     st.divider()
 
-                    # Mengambil harga terakhir dari data yang sudah pasti bersih
                     current_price = history_df['Close'].iloc[-1]
 
-                    # --- BLOK KODE UNTUK VALIDASI ---
-                    # Memastikan harga saat ini dan prediksi adalah angka yang valid sebelum digunakan.
-                    if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
-                        st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'. Coba lagi nanti.")
-                        st.stop() 
-                    
                     if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
                         st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
                         st.stop()
-                    # --- AKHIR BLOK KODE VALIDASI ---
 
                     price_change = prediction - current_price
                     pct_change = (price_change / current_price) * 100
