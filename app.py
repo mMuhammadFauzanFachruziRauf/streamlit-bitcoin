@@ -47,37 +47,33 @@ def load_all_assets():
         st.error(f"Terjadi kesalahan saat memuat aset model: {e}")
         return None
 
-# --- FUNGSI DATA DIPERBARUI DENGAN STANDARDISASI KOLOM ---
+# --- FUNGSI DATA DIPERBARUI UNTUK YFINANCE MODERN ---
 @st.cache_data(ttl=3600) # Cache data selama 1 jam
 def load_data(ticker="BTC-USD"):
     """
     Mengambil data historis Bitcoin terbaru.
-    Fungsi ini juga menstandardisasi nama kolom untuk konsistensi.
+    yfinance versi terbaru menangani sesi secara otomatis menggunakan curl_cffi.
     """
     st.info("Mengambil data terbaru dari server yfinance...")
     try:
+        # yfinance modern tidak memerlukan session manual.
+        # Ia akan otomatis menggunakan backend yang lebih canggih.
         data = yf.download(
             tickers=ticker,
             period="200d",
             auto_adjust=True,
-            progress=False
+            progress=False # Menonaktifkan progress bar di log
         )
         
         if data.empty:
-            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}.")
+            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}. Ini mungkin masalah sementara atau ticker tidak valid.")
             return None
         
-        # --- PERBAIKAN: Standardisasi nama kolom ---
-        # Mengubah semua nama kolom menjadi Title Case (misal: 'close' -> 'Close')
-        # untuk memastikan konsistensi di seluruh aplikasi.
-        data.columns = [col.title() for col in data.columns]
-        
-        # Memeriksa apakah kolom 'Close' ada setelah standardisasi
-        if 'Close' not in data.columns:
-            st.error(f"Gagal menemukan kolom 'Close' bahkan setelah standardisasi. Kolom yang ditemukan: {data.columns.tolist()}")
-            return None
-
         st.success("Data berhasil diambil dari yfinance.")
+        data.rename(columns={
+            'Open': 'Open', 'High': 'High', 'Low': 'Low',
+            'Close': 'Close', 'Volume': 'Volume'
+        }, inplace=True, errors='ignore')
         return data
 
     except Exception as e:
@@ -87,7 +83,6 @@ def load_data(ticker="BTC-USD"):
 def create_features(df):
     """Membuat fitur teknikal yang konsisten dengan saat pelatihan."""
     df_feat = df.copy()
-    # Kode ini sekarang aman karena nama kolom sudah distandardisasi
     df_feat['MA_7'] = df_feat['Close'].rolling(window=7).mean()
     df_feat['MA_30'] = df_feat['Close'].rolling(window=30).mean()
     df_feat['MA_90'] = df_feat['Close'].rolling(window=90).mean()
@@ -95,8 +90,7 @@ def create_features(df):
     df_feat['Volatility_7'] = df_feat['Daily_Return'].rolling(window=7).std()
     for lag in [1, 2, 3, 7, 14]:
         df_feat[f'Close_lag_{lag}'] = df_feat['Close'].shift(lag)
-        if 'Volume' in df.columns:
-            df_feat[f'Volume_lag_{lag}'] = df_feat['Volume'].shift(lag)
+        df_feat[f'Volume_lag_{lag}'] = df_feat['Volume'].shift(lag)
     df_feat.dropna(inplace=True)
     return df_feat
 
@@ -126,13 +120,6 @@ if assets:
 
         if raw_data is not None and len(raw_data) > 90:
             with st.spinner("Membuat fitur dan melakukan prediksi..."):
-                
-                # Memastikan kolom yang dibutuhkan untuk fitur ada
-                required_cols_for_features = ['Close', 'Volume']
-                if not all(col in raw_data.columns for col in required_cols_for_features):
-                    st.error(f"Data yang diunduh tidak memiliki kolom yang dibutuhkan {required_cols_for_features}. Kolom yang ada: {raw_data.columns.tolist()}")
-                    st.stop()
-
                 feature_data = create_features(raw_data.copy())
 
                 if not feature_data.empty:
@@ -143,10 +130,7 @@ if assets:
                         scaler = assets['lstm_scaler']
                         lookback = 60
                         if len(raw_data) >= lookback:
-                            latest_prices = raw_data['Close'].dropna().iloc[-lookback:].values.reshape(-1, 1)
-                            if len(latest_prices) < lookback:
-                                st.warning(f"Tidak cukup data valid untuk lookback LSTM setelah menghapus nilai NaN ({len(latest_prices)}/{lookback}).")
-                                st.stop()
+                            latest_prices = raw_data['Close'].iloc[-lookback:].values.reshape(-1, 1)
                             latest_scaled = scaler.transform(latest_prices)
                             input_lstm = np.reshape(latest_scaled, (1, lookback, 1))
                             prediction_scaled = model.predict(input_lstm)
@@ -165,13 +149,7 @@ if assets:
                     
                     st.success("Prediksi berhasil dibuat!")
                     
-                    # --- PERBAIKAN GRAFIK: Membersihkan data sebelum plotting ---
-                    history_df = raw_data.tail(90).dropna(subset=['Close'])
-
-                    if history_df.empty:
-                        st.warning("Tidak ada data historis yang valid untuk ditampilkan di grafik.")
-                        st.stop()
-
+                    history_df = raw_data.tail(90)
                     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
 
                     st.subheader("Informasi Data")
@@ -183,19 +161,39 @@ if assets:
                     
                     st.divider()
 
-                    current_price = history_df['Close'].iloc[-1]
+                    # --- PERBAIKAN: Memastikan harga terakhir adalah skalar ---
+                    # Mengambil data penutupan, dan memastikannya berupa Series
+                    close_data = raw_data['Close']
+                    if isinstance(close_data, pd.DataFrame):
+                        # Jika yfinance mengembalikan DataFrame (misalnya, karena multi-index),
+                        # ambil kolom pertama untuk menjadikannya Series.
+                        close_data = close_data.iloc[:, 0]
 
-                    if pd.isna(prediction) or not isinstance(prediction, (np.number, float, int)):
+                    # Sekarang 'close_data' dijamin berupa Series, lanjutkan seperti biasa.
+                    latest_close_series = close_data.tail(1)
+                    if latest_close_series.empty:
+                        st.error("Tidak dapat menemukan data harga terakhir yang valid. Data mentah mungkin kosong di bagian akhir.")
+                        st.stop()
+                    current_price = latest_close_series.item()
+
+                    # --- BLOK KODE UNTUK VALIDASI ---
+                    # Memastikan harga saat ini dan prediksi adalah angka yang valid sebelum digunakan.
+                    if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
+                        st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'. Coba lagi nanti.")
+                        st.stop() # Menghentikan eksekusi skrip untuk menghindari error lebih lanjut
+                    
+                    if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
                         st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
                         st.stop()
+                    # --- AKHIR BLOK KODE VALIDASI ---
 
                     price_change = prediction - current_price
-                    pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
+                    pct_change = (price_change / current_price) * 100
 
                     st.subheader("Hasil Prediksi untuk Esok Hari")
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Harga Terakhir (Saat Ini)", f"${current_price:,.2f}")
-                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"{price_change:,.2f} ({pct_change:.2f}%)")
+                    col2.metric("Prediksi Harga Besok", f"${prediction:,.2f}", f"${price_change:.2f} ({pct_change:.2f}%)")
                     col3.info(f"Model: **{selected_model_display}**")
                     
                     st.subheader("Visualisasi Harga")
