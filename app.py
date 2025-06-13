@@ -62,11 +62,11 @@ def load_data(ticker="BTC-USD"):
         if data.empty:
             message_container.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}.")
             return None
+        
+        # --- PERBAIKAN: Standarisasi nama kolom menjadi huruf kecil ---
+        data.columns = [col.lower() for col in data.columns]
+        
         message_container.success("Data berhasil diambil dari yfinance.")
-        data.rename(columns={
-            'Open': 'Open', 'High': 'High', 'Low': 'Low',
-            'Close': 'Close', 'Volume': 'Volume'
-        }, inplace=True, errors='ignore')
         return data
     except Exception as e:
         message_container.error(f"Gagal mengambil data dari yfinance. Kesalahan: {e}")
@@ -75,14 +75,15 @@ def load_data(ticker="BTC-USD"):
 def create_features(df):
     """Membuat fitur teknikal yang konsisten dengan saat pelatihan."""
     df_feat = df.copy()
-    df_feat['MA_7'] = df_feat['Close'].rolling(window=7).mean()
-    df_feat['MA_30'] = df_feat['Close'].rolling(window=30).mean()
-    df_feat['MA_90'] = df_feat['Close'].rolling(window=90).mean()
-    df_feat['Daily_Return'] = df_feat['Close'].pct_change()
+    # --- PERBAIKAN: Menggunakan nama kolom huruf kecil ---
+    df_feat['MA_7'] = df_feat['close'].rolling(window=7).mean()
+    df_feat['MA_30'] = df_feat['close'].rolling(window=30).mean()
+    df_feat['MA_90'] = df_feat['close'].rolling(window=90).mean()
+    df_feat['Daily_Return'] = df_feat['close'].pct_change()
     df_feat['Volatility_7'] = df_feat['Daily_Return'].rolling(window=7).std()
     for lag in [1, 2, 3, 7, 14]:
-        df_feat[f'Close_lag_{lag}'] = df_feat['Close'].shift(lag)
-        df_feat[f'Volume_lag_{lag}'] = df_feat['Volume'].shift(lag)
+        df_feat[f'Close_lag_{lag}'] = df_feat['close'].shift(lag)
+        df_feat[f'Volume_lag_{lag}'] = df_feat['volume'].shift(lag)
     df_feat.dropna(inplace=True)
     return df_feat
 
@@ -122,7 +123,8 @@ if assets:
                         scaler = assets['lstm_scaler']
                         lookback = 60
                         if len(raw_data) >= lookback:
-                            latest_prices = raw_data['Close'].iloc[-lookback:].values.reshape(-1, 1)
+                            # --- PERBAIKAN: Menggunakan nama kolom huruf kecil ---
+                            latest_prices = raw_data['close'].iloc[-lookback:].values.reshape(-1, 1)
                             latest_scaled = scaler.transform(latest_prices)
                             input_lstm = np.reshape(latest_scaled, (1, lookback, 1))
                             prediction_scaled = model.predict(input_lstm)
@@ -138,7 +140,6 @@ if assets:
                         input_scaled = scaler.transform(latest_input_df)
                         prediction = model.predict(input_scaled)[0]
                     
-                    # Simpan hasil ke session state untuk menjaga tampilan tetap ada
                     st.session_state['prediction_made'] = True
                     st.session_state['raw_data'] = raw_data
                     st.session_state['prediction'] = prediction
@@ -155,9 +156,7 @@ if assets:
     st.sidebar.markdown("---")
     st.sidebar.info("Aplikasi ini dibuat untuk tujuan edukasi dan bukan merupakan nasihat keuangan. Selalu lakukan riset Anda sendiri (DYOR).")
 
-# Blok ini akan selalu berjalan dan menampilkan hasil jika prediksi sudah pernah dibuat
 if st.session_state.get('prediction_made', False):
-    # Ambil data dari session state
     raw_data = st.session_state['raw_data']
     prediction = st.session_state['prediction']
     selected_model_display = st.session_state['selected_model_display']
@@ -174,13 +173,13 @@ if st.session_state.get('prediction_made', False):
     
     st.divider()
 
-    close_data = raw_data['Close']
+    # --- PERBAIKAN: Menggunakan nama kolom huruf kecil ---
+    close_data = raw_data['close']
     if isinstance(close_data, pd.DataFrame):
         close_data = close_data.iloc[:, 0]
 
     current_price = close_data.iloc[-1]
 
-    # Validasi tipe data sebelum kalkulasi
     if pd.isna(current_price) or not np.isscalar(current_price):
         st.error(f"Gagal memproses harga terakhir yang valid. Nilai: '{current_price}'.")
         st.stop()
@@ -200,21 +199,20 @@ if st.session_state.get('prediction_made', False):
     st.subheader("Visualisasi Harga")
     fig = go.Figure()
     
-    # PERBAIKAN: Memastikan tidak ada nilai NaN pada data historis sebelum plotting
-    valid_history = history_df.dropna(subset=['Close'])
+    # --- PERBAIKAN: Menggunakan nama kolom huruf kecil ---
+    valid_history = history_df.dropna(subset=['close'])
     
-    fig.add_trace(go.Scatter(x=valid_history.index, y=valid_history['Close'], mode='lines', name='Harga Historis'))
+    fig.add_trace(go.Scatter(x=valid_history.index, y=valid_history['close'], mode='lines', name='Harga Historis'))
     fig.add_trace(go.Scatter(
         x=[prediction_date], y=[prediction], mode='markers', name='Harga Prediksi',
         marker=dict(color='orange', size=12, symbol='star', line=dict(width=1, color='darkorange')),
         hovertemplate=f"<b>Prediksi untuk {prediction_date.strftime('%d %b %Y')}</b><br>Harga: ${prediction:,.2f}<extra></extra>"
     ))
     
-    # PERBAIKAN: Filter list untuk mencegah error UFuncNoLoopError karena nilai NaN
-    all_prices = list(valid_history['Close']) + [prediction]
+    # --- PERBAIKAN: Menggunakan nama kolom huruf kecil ---
+    all_prices = list(valid_history['close']) + [prediction]
     finite_prices = [p for p in all_prices if np.isfinite(p)]
     
-    # Hanya lanjutkan jika ada data yang valid untuk diplot
     if finite_prices:
         min_price = min(finite_prices)
         max_price = max(finite_prices)
@@ -232,11 +230,9 @@ if st.session_state.get('prediction_made', False):
     else:
         st.warning("Tidak ada data harga yang valid untuk divisualisasikan pada grafik.")
 
-# Kondisi awal jika aplikasi pertama kali dibuka dan belum ada prediksi
 if 'prediction_made' not in st.session_state:
     st.info("Pilih model di sidebar kiri dan klik tombol 'Lakukan Prediksi' untuk memulai.")
 
-# Pesan error jika model gagal dimuat sama sekali
 if not assets:
     st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat.")
 
