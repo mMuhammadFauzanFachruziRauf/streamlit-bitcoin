@@ -1,7 +1,8 @@
 streamlit
 pandas
 numpy==1.26.4
-yfinance
+yfinance>=0.2.37
+curl_cffi
 joblib
 plotly
 tensorflow==2.16.1
