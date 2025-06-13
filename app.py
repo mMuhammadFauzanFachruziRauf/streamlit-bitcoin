@@ -5,8 +5,9 @@ import yfinance as yf
 import joblib
 import plotly.graph_objects as go
 from tensorflow.keras.models import load_model
-from datetime import date, timedelta # DIUBAH: Tambahkan 'date' dan 'timedelta'
+from datetime import date, timedelta
 from curl_cffi.requests import Session
+import io # <-- Tambahkan import ini untuk debugging
 
 # =============================================================================
 # KONFIGURASI HALAMAN
@@ -39,23 +40,14 @@ def load_all_assets():
         st.error(f"Error fatal saat memuat aset model: {e}. Aplikasi tidak bisa berjalan.")
         return None
 
-# DIUBAH: Menggunakan start/end date untuk pengambilan data yang lebih andal
 @st.cache_data(ttl=3600)
 def _get_data_from_yfinance(ticker="BTC-USD"):
     """Fungsi MURNI yang di-cache: Hanya download data, tanpa interaksi UI."""
     try:
         end_date = date.today()
-        start_date = end_date - timedelta(days=365) # Ambil data 1 tahun untuk keamanan
-        
+        start_date = end_date - timedelta(days=365)
         session = Session(impersonate="chrome110")
-        data = yf.download(
-            tickers=ticker, 
-            start=start_date, 
-            end=end_date, 
-            auto_adjust=True, 
-            progress=False, 
-            session=session
-        )
+        data = yf.download(tickers=ticker, start=start_date, end=end_date, auto_adjust=True, progress=False, session=session)
         return data
     except Exception as e:
         return e
@@ -108,12 +100,50 @@ def run_prediction(assets, raw_data, model_code):
         input_scaled = scaler.transform(latest_input_df[feature_columns])
         return float(model.predict(input_scaled)[0])
 
+# =============================================================================
+# DIUBAH: Fungsi display_prediction_results dengan mode debug
+# =============================================================================
 def display_prediction_results(prediction_result, raw_data, model_display_name):
     """Menampilkan hasil prediksi."""
-    history_df = raw_data.tail(90)
-    prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
-    current_price = float(history_df['Close'].values[-1])
     
+    # =================================================================
+    # DEBUGGING SECTION
+    # =================================================================
+    st.subheader("🕵️‍♂️ DEBUG MODE: Analisis Data")
+    st.warning("Tolong screenshot seluruh bagian ini (dari 'DEBUG MODE' sampai bawah) dan kirimkan.")
+    
+    st.write("---")
+    st.write("#### 1. Informasi Umum `raw_data`")
+    buffer = io.StringIO()
+    raw_data.info(buf=buffer)
+    info_string = buffer.getvalue()
+    st.text(info_string)
+
+    st.write("#### 2. Lima Baris Terakhir dari `raw_data`")
+    st.dataframe(raw_data.tail())
+
+    history_df = raw_data.tail(90)
+    st.write("#### 3. Informasi `history_df` (Data yang akan digambar)")
+    st.write(f"Jumlah baris dalam `history_df`: **{len(history_df)}**")
+    st.write("Lima baris pertama dari `history_df`:")
+    st.dataframe(history_df.head())
+    
+    current_price = float(history_df['Close'].values[-1])
+    st.write("#### 4. Nilai Variabel Kunci")
+    st.code(f"""
+    Tipe data 'prediction_result' : {type(prediction_result)}
+    Nilai 'prediction_result'   : {prediction_result}
+
+    Tipe data 'current_price'     : {type(current_price)}
+    Nilai 'current_price'         : {current_price}
+    """)
+    st.write("---")
+    # =================================================================
+    # END OF DEBUGGING SECTION
+    # =================================================================
+    
+    # Kode asli untuk menampilkan hasil
+    prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
     price_change = prediction_result - current_price
     pct_change = (price_change / current_price) * 100 if current_price != 0 else 0
 
@@ -170,17 +200,8 @@ def main():
             st.session_state['model_name']
         )
     else:
+        # Bagian ini tidak perlu diubah
         st.info("Pilih model di sidebar & klik 'Lakukan Prediksi' untuk memulai.")
-        raw_data_hist = load_data_with_ui()
-        
-        if isinstance(raw_data_hist, pd.DataFrame) and not raw_data_hist.empty:
-            st.subheader("Pergerakan Harga Bitcoin (90 Hari Terakhir)")
-            fig_hist = go.Figure()
-            fig_hist.add_trace(go.Scatter(x=raw_data_hist.index.tail(90), y=raw_data_hist['Close'].tail(90), mode='lines', name='Harga Historis'))
-            fig_hist.update_layout(title='Grafik Harga Historis BTC-USD', xaxis_title='Tanggal', yaxis_title='Harga (USD)')
-            st.plotly_chart(fig_hist, use_container_width=True)
-        else:
-            st.warning("Tidak dapat menampilkan grafik karena data awal gagal dimuat.")
 
 if __name__ == '__main__':
     main()
