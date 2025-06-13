@@ -28,7 +28,6 @@ def load_all_assets():
     assets = {}
     model_dir = 'model/'
     try:
-        # Pastikan path ini benar di repositori Anda
         assets['best_model'] = joblib.load(f'{model_dir}best_bitcoin_model.pkl')
         assets['feature_scaler'] = joblib.load(f'{model_dir}feature_scaler.pkl')
         assets['feature_columns'] = joblib.load(f'{model_dir}feature_columns.pkl')
@@ -47,33 +46,26 @@ def load_all_assets():
         st.error(f"Terjadi kesalahan saat memuat aset model: {e}")
         return None
 
-# --- FUNGSI DATA DIPERBARUI UNTUK YFINANCE MODERN ---
-@st.cache_data(ttl=3600) # Cache data selama 1 jam
+@st.cache_data(ttl=3600)
 def load_data(ticker="BTC-USD"):
-    """
-    Mengambil data historis Bitcoin terbaru.
-    yfinance versi terbaru menangani sesi secara otomatis menggunakan curl_cffi.
-    """
+    """Mengambil data historis Bitcoin terbaru."""
     st.info("Mengambil data terbaru dari server yfinance...")
     try:
         data = yf.download(
             tickers=ticker,
             period="200d",
             auto_adjust=True,
-            progress=False # Menonaktifkan progress bar di log
+            progress=False
         )
-        
         if data.empty:
-            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}. Ini mungkin masalah sementara atau ticker tidak valid.")
+            st.error(f"Tidak ada data yang diterima dari yfinance untuk ticker {ticker}.")
             return None
-        
         st.success("Data berhasil diambil dari yfinance.")
         data.rename(columns={
             'Open': 'Open', 'High': 'High', 'Low': 'Low',
             'Close': 'Close', 'Volume': 'Volume'
         }, inplace=True, errors='ignore')
         return data
-
     except Exception as e:
         st.error(f"Gagal mengambil data dari yfinance. Kesalahan: {e}")
         return None
@@ -114,10 +106,10 @@ if assets:
     selected_model_code = model_options[selected_model_display]
 
     if st.sidebar.button("🚀 Lakukan Prediksi Harga Besok", key="predict_button"):
-        raw_data = load_data()
+        with st.spinner("Mengambil data dan melakukan prediksi..."):
+            raw_data = load_data()
 
-        if raw_data is not None and len(raw_data) > 90:
-            with st.spinner("Membuat fitur dan melakukan prediksi..."):
+            if raw_data is not None and len(raw_data) > 90:
                 feature_data = create_features(raw_data.copy())
 
                 if not feature_data.empty:
@@ -136,7 +128,6 @@ if assets:
                         else:
                             st.warning(f"Data tidak cukup untuk lookback LSTM ({len(raw_data)}/{lookback} baris tersedia).")
                             st.stop()
-                    
                     else: # 'best_model'
                         model = assets['best_model']
                         scaler = assets['feature_scaler']
@@ -147,27 +138,23 @@ if assets:
                     
                     st.success("Prediksi berhasil dibuat!")
                     
-                    # --- MODIFIKASI: SIMPAN HASIL KE SESSION STATE ---
                     st.session_state['prediction_made'] = True
                     st.session_state['raw_data'] = raw_data
                     st.session_state['prediction'] = prediction
                     st.session_state['selected_model_display'] = selected_model_display
                 
                 else:
-                    st.warning("Tidak cukup data untuk membuat fitur setelah proses pembersihan. Periksa data mentah.")
+                    st.warning("Tidak cukup data untuk membuat fitur setelah proses pembersihan.")
                     st.session_state['prediction_made'] = False
-        
-        elif raw_data is not None:
-             st.warning(f"Tidak cukup data historis dari yfinance untuk membuat fitur (diperlukan > 90 hari, didapatkan {len(raw_data)} hari).")
-             st.session_state['prediction_made'] = False
+            
+            elif raw_data is not None:
+                 st.warning(f"Tidak cukup data historis (diperlukan > 90 hari, didapatkan {len(raw_data)} hari).")
+                 st.session_state['prediction_made'] = False
 
     st.sidebar.markdown("---")
     st.sidebar.info("Aplikasi ini dibuat untuk tujuan edukasi dan bukan merupakan nasihat keuangan. Selalu lakukan riset Anda sendiri (DYOR).")
 
-# --- MODIFIKASI: PINDAHKAN BLOK TAMPILAN KE LUAR BUTTON, GUNAKAN SESSION STATE ---
-# Blok ini akan selalu berjalan, tapi hanya menampilkan hasil jika prediksi sudah dibuat.
 if st.session_state.get('prediction_made', False):
-    # Ambil data dari session state
     raw_data = st.session_state['raw_data']
     prediction = st.session_state['prediction']
     selected_model_display = st.session_state['selected_model_display']
@@ -188,18 +175,14 @@ if st.session_state.get('prediction_made', False):
     if isinstance(close_data, pd.DataFrame):
         close_data = close_data.iloc[:, 0]
 
-    latest_close_series = close_data.tail(1)
-    if latest_close_series.empty:
-        st.error("Tidak dapat menemukan data harga terakhir yang valid.")
-        st.stop()
-    current_price = latest_close_series.item()
+    current_price = close_data.iloc[-1]
 
-    if pd.isna(current_price) or not isinstance(current_price, (int, float, np.number)):
-        st.error(f"Gagal memproses harga terakhir yang valid dari data. Nilai yang diterima: '{current_price}'.")
+    if pd.isna(current_price) or not np.isscalar(current_price):
+        st.error(f"Gagal memproses harga terakhir yang valid. Nilai: '{current_price}'.")
         st.stop()
     
-    if pd.isna(prediction) or not isinstance(prediction, (int, float, np.number)):
-        st.error(f"Model menghasilkan prediksi yang tidak valid. Nilai prediksi: '{prediction}'.")
+    if pd.isna(prediction) or not np.isscalar(prediction):
+        st.error(f"Model menghasilkan prediksi tidak valid. Nilai: '{prediction}'.")
         st.stop()
 
     price_change = prediction - current_price
@@ -219,17 +202,27 @@ if st.session_state.get('prediction_made', False):
         marker=dict(color='orange', size=12, symbol='star', line=dict(width=1, color='darkorange')),
         hovertemplate=f"<b>Prediksi untuk {prediction_date.strftime('%d %b %Y')}</b><br>Harga: ${prediction:,.2f}<extra></extra>"
     ))
+    
+    # --- PENYESUAIAN GRAFIK ---
+    # Menghitung rentang Y secara dinamis untuk memastikan grafik terlihat jelas
+    all_prices = list(history_df['Close']) + [prediction]
+    min_price = min(all_prices)
+    max_price = max(all_prices)
+    padding = (max_price - min_price) * 0.10 # Bantalan 10%
+    
+    yaxis_range = [min_price - padding, max_price + padding]
+    
     fig.update_layout(
         title='Pergerakan Harga Bitcoin: 90 Hari Terakhir & Prediksi Besok',
         xaxis_title='Tanggal',
         yaxis_title='Harga (USD)',
-        template='plotly_dark'
+        template='plotly_dark',
+        yaxis_range=yaxis_range  # <-- INI ADALAH PERBAIKAN UTAMA
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# Kondisi awal jika aplikasi pertama kali dibuka
 if 'prediction_made' not in st.session_state:
     st.info("Pilih model di sidebar kiri dan klik tombol 'Lakukan Prediksi' untuk memulai.")
 
 if not assets:
-    st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat. Pastikan folder 'model' dan isinya sudah benar di repositori Anda dan periksa log aplikasi untuk detailnya.")
+    st.error("Aplikasi tidak dapat berjalan karena aset model gagal dimuat.")
