@@ -39,10 +39,7 @@ def load_all_assets():
         st.error(f"Error fatal saat memuat aset model: {e}. Aplikasi tidak bisa berjalan.")
         return None
 
-# =============================================================================
-# Pola Pengambilan Data yang Kuat (Pemisahan Cache dan UI)
-# =============================================================================
-
+# Pola Pengambilan Data yang Kuat
 @st.cache_data(ttl=3600)
 def _get_data_from_yfinance(ticker="BTC-USD"):
     """Fungsi MURNI yang di-cache: Hanya download data, tanpa interaksi UI."""
@@ -54,7 +51,7 @@ def _get_data_from_yfinance(ticker="BTC-USD"):
         return e
 
 def load_data_with_ui(ticker="BTC-USD"):
-    """Fungsi yang dipanggil oleh aplikasi: Menangani UI dan memanggil fungsi cache."""
+    """Fungsi yang dipanggil aplikasi: Menangani UI dan memanggil fungsi cache."""
     st.info("Memeriksa data harga Bitcoin terbaru...")
     data = _get_data_from_yfinance(ticker)
     
@@ -67,19 +64,28 @@ def load_data_with_ui(ticker="BTC-USD"):
     elif isinstance(data, Exception):
         st.error(f"Terjadi error saat mengambil data: {data}")
         return None
-    return None # Fallback jika data bukan DataFrame atau Exception
+    return None
 
+# =============================================================================
+# DIKEMBALIKAN KE VERSI LENGKAP: Fungsi create_features
+# =============================================================================
 def create_features(df):
+    """Membuat semua fitur teknikal yang dibutuhkan oleh model."""
     df_feat = df.copy()
     df_feat['MA_7'] = df_feat['Close'].rolling(window=7).mean()
     df_feat['MA_30'] = df_feat['Close'].rolling(window=30).mean()
+    df_feat['MA_90'] = df_feat['Close'].rolling(window=90).mean()
     df_feat['Daily_Return'] = df_feat['Close'].pct_change()
+    df_feat['Volatility_7'] = df_feat['Daily_Return'].rolling(window=7).std()
+    for lag in [1, 2, 3, 7, 14]:
+        df_feat[f'Close_lag_{lag}'] = df_feat['Close'].shift(lag)
+        df_feat[f'Volume_lag_{lag}'] = df_feat['Volume'].shift(lag)
     df_feat.dropna(inplace=True)
     return df_feat
 
 def run_prediction(assets, raw_data, model_code):
+    """Menjalankan proses prediksi dan mengembalikan float."""
     if model_code == "lstm_model":
-        # Logika LSTM
         model, scaler = assets['lstm_model'], assets['lstm_scaler']
         if len(raw_data) < LSTM_LOOKBACK: return None
         latest_prices = raw_data['Close'].iloc[-LSTM_LOOKBACK:].values.reshape(-1, 1)
@@ -87,16 +93,17 @@ def run_prediction(assets, raw_data, model_code):
         input_lstm = np.reshape(latest_scaled, (1, LSTM_LOOKBACK, 1))
         prediction_scaled = model.predict(input_lstm)
         return float(scaler.inverse_transform(prediction_scaled)[0][0])
-    else:
-        # Logika Regresi
+    else: # "best_model"
         model, scaler, feature_columns = assets['best_model'], assets['feature_scaler'], assets['feature_columns']
         feature_data = create_features(raw_data.copy())
         if feature_data.empty: return None
         latest_input_df = feature_data.iloc[-1:]
+        # Baris ini sekarang seharusnya aman karena create_features sudah lengkap
         input_scaled = scaler.transform(latest_input_df[feature_columns])
         return float(model.predict(input_scaled)[0])
 
 def display_prediction_results(prediction_result, raw_data, model_display_name):
+    """Menampilkan hasil prediksi."""
     history_df = raw_data.tail(90)
     prediction_date = history_df.index[-1].to_pydatetime() + timedelta(days=1)
     current_price = float(history_df['Close'].values[-1])
@@ -110,6 +117,8 @@ def display_prediction_results(prediction_result, raw_data, model_display_name):
     col2.metric("Prediksi Harga Besok", f"${prediction_result:,.2f}", f"${price_change:+.2f} ({pct_change:+.2f}%)")
     col3.metric("Model Digunakan", model_display_name)
     
+    # ... (sisa fungsi display_prediction_results sama)
+    st.subheader("Visualisasi Harga")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=history_df.index, y=history_df['Close'], name='Harga Historis', line=dict(color='royalblue')))
     fig.add_trace(go.Scatter(x=[prediction_date], y=[prediction_result], name='Prediksi Harga', mode='markers', marker=dict(color='orange', size=12, symbol='star')))
@@ -140,7 +149,7 @@ def main():
                     st.session_state['raw_data'] = raw_data_pred
                     st.session_state['model_name'] = selected_model_display
                 else:
-                    st.error("Gagal membuat prediksi. Data tidak mencukupi.")
+                    st.error("Gagal membuat prediksi. Data tidak mencukupi untuk membuat fitur.")
                     st.session_state.clear()
             else:
                 st.error("Gagal prediksi karena data tidak dapat diambil.")
@@ -149,7 +158,7 @@ def main():
     st.sidebar.info("Aplikasi ini bukan merupakan nasihat keuangan.")
     st.divider()
 
-    if 'prediction_result' in st.session_state:
+    if 'prediction_result' in st.session_state and st.session_state.get('prediction_result') is not None:
         display_prediction_results(
             st.session_state['prediction_result'],
             st.session_state['raw_data'],
@@ -159,7 +168,6 @@ def main():
         st.info("Pilih model di sidebar & klik 'Lakukan Prediksi' untuk memulai.")
         raw_data_hist = load_data_with_ui()
         
-        # Pengecekan paling kuat dan defensif
         if isinstance(raw_data_hist, pd.DataFrame) and not raw_data_hist.empty:
             st.subheader("Pergerakan Harga Bitcoin (90 Hari Terakhir)")
             fig_hist = go.Figure()
